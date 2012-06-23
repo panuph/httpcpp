@@ -73,8 +73,7 @@ class HttpRequest {
  *
  * TODO: (1) Code from_sequence() to parse more data, like headers, and make
  *           them available via getting methods, e.g. get_headers("XYZ").
- *       (2) Code to_sequence() to cover more types of responses.
- *       (3) Make from_sequence() more flexible because it always expects 
+ *       (2) Make from_sequence() more flexible because it always expects 
  *           Content-Length at the moment.
  */
 class HttpResponse {
