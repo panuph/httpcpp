@@ -377,7 +377,7 @@ void AsyncHttpServer::on_read(const int& fd) {
                             } else if (request->method.compare("POST") == 0) {
                                 response = handler->post(request, args);
                             } else {
-                                throw runtime_error("Invalid HTTP method");
+                                response = new HttpResponse(405);
                             }
                         } else {
                             response = new HttpResponse(404);
@@ -437,7 +437,7 @@ void AsyncHttpServer::on_write(const int& fd) {
         this->on_close(fd);
     }
     if (error) {
-        throw runtime_error("AsyncHttpSever write error");
+        throw runtime_error("AsyncHttpServer write error");
     }
 }
 
