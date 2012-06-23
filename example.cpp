@@ -51,8 +51,8 @@ class HttpResponseHandlerC : public HttpResponseHandler {
 int main() {
     // server
     AsyncHttpServer* server = new AsyncHttpServer(8850);
-    server->add_handler("/a/([[:digit:]]+)", new HttpRequestHandlerA());
-    server->add_handler("/b/([[:digit:]]+)", new HttpRequestHandlerB());
+    server->add_handler("^/a/([[:digit:]]+)$", new HttpRequestHandlerA());
+    server->add_handler("^/b/([[:digit:]]+)$", new HttpRequestHandlerB());
     // client
     AsyncHttpClient* client = new AsyncHttpClient();
     client->fetch("127.0.0.1", 8850, "GET", "/a/10", "aaa", 

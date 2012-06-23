@@ -20,14 +20,13 @@ class HttpRequestHandler;
 class HttpResponseHandler;
 
 /**
- * HttpRequest provides access to data of an http reqeust. In general cases, 
+ * HttpRequest provides access to data of an HTTP reqeust. In general cases, 
  * AsyncHttpServer creates objects of this class automatically and provides 
  * them in methods of HttpReqestHandler, which you inherit in order to build 
  * your own handler.
  *
  * TODO: (1) Code from_sequence() to parse more data, like headers, and make
- *           them available via getting methods, e.g. get_headers("XYZ") and
- *           support more than GET and POST methods.
+ *           them available via getting methods, e.g. get_headers("XYZ").
  */
 class HttpRequest {
     friend class AsyncHttpServer;
@@ -67,7 +66,7 @@ class HttpRequest {
 };
 
 /**
- * HttpResponse provides access to data of an http response. In general cases, 
+ * HttpResponse provides access to data of an HTTP response. In general cases, 
  * AsyncHttpClient creates objects of this class automatically and provides
  * them in methods of HttpResponseHandler, which you inherit in order to build 
  * your own handler.
@@ -75,8 +74,7 @@ class HttpRequest {
  * TODO: (1) Code from_sequence() to parse more data, like headers, and make
  *           them available via getting methods, e.g. get_headers("XYZ").
  *       (2) Code to_sequence() to cover more types of responses.
- *       (3) Have static response objects for particular response codes.
- *       (4) Make from_sequence() more flexible because it always expects 
+ *       (3) Make from_sequence() more flexible because it always expects 
  *           Content-Length at the moment.
  */
 class HttpResponse {
@@ -87,7 +85,7 @@ class HttpResponse {
         string body;
     protected:
         /** 
-         * Returns the sequence of the resonse as a http packet. 
+         * Returns the sequence of the resonse as an HTTP packet. 
          */
         const string to_sequence();
         /**
@@ -116,26 +114,26 @@ class HttpResponse {
 };
 
 /**
- * HttpRequestHandler handles http requests on the server side. All handlers of 
+ * HttpRequestHandler handles HTTP requests on the server side. All handlers of 
  * AsyncHttpServer must inherit this class and should implement the supported 
  * methods accordingly.
  */
 class HttpRequestHandler {
     public:
         /**
-         * Called when a http GET request is available. The response returned 
+         * Called when a HTTP GET request is available. The response returned 
          * is sent to the client by the server.
          *
-         * @param request the http request         
+         * @param request the HTTP request         
          * @param args the arguments associated with the regex of the handler        
          */
         virtual HttpResponse* get(HttpRequest* const request, 
                                   const vector<string>& args);
         /**
-         * Called when a http POST request is available. The response returned
+         * Called when a HTTP POST request is available. The response returned
          * is sent to the client by the server.
          *
-         * @param request the http request 
+         * @param request the HTTP request 
          * @param args the arguments associated with the regex of the handler        
          */
         virtual HttpResponse* post(HttpRequest* const request,
@@ -143,56 +141,61 @@ class HttpRequestHandler {
 };
 
 /**
- * HttpResponseHandler handles http responses on the client side. All handlers 
+ * HttpResponseHandler handles HTTP responses on the client side. All handlers 
  * of AsyncHttpClient must inherit this class and implement method on_receive().
  */
 class HttpResponseHandler {
     public:
         /**
-         * Called when a http response is available. 
+         * Called when an HTTP response is available. 
          *
-         * @param response the http response
+         * @param response the HTTP response
          */
         virtual void on_receive(HttpResponse* const response) = 0;
 };
 
 /**
  * IOHandler handles IO events. It is the parent class of AsyncHttpClient and
- * AsyncHttpServer. This class should not be used directly by users of this 
- * library.
+ * AsyncHttpServer. In general, you should not need to use this class. 
  */
 class IOHandler {
+    protected:
+        map<int, string> read_buffers;
+        map<int, string> write_buffers;
+        /**
+         * Clears all the buffers associated with the fd.
+         *
+         * @param the associated file descriptor
+         */
+        void clear_buffers(const int& fd);
     public:
         /**
          * Called when network data from the file descriptor is available. 
          *
          * @param fd the associted file descriptor
          */
-        virtual void on_read(int& fd) = 0;
+        virtual void on_read(const int& fd) = 0;
         /**
          * Called when network buffer of the file descriptor is available. 
          *
          * @param fd the associted file descriptor
          */
-        virtual void on_write(int& fd) = 0;
+        virtual void on_write(const int& fd) = 0;
         /**
-         * Called when the file descriptor is closed due to error. 
+         * Called when the file descriptor is closed unexpectedly. 
          *
          * @param fd the associted file descriptor
          */
-        virtual void on_error(int& fd) = 0;
+        virtual void on_close(const int& fd) = 0;
 };
 
 /**
- * AsyncHttpClient is an async http client. The client is driven by an IO loop.
- * If one is not given, the default IO loop is used.
+ * AsyncHttpClient is an async HTTP client driven by an IO loop.
  */
 class AsyncHttpClient : public IOHandler {
     friend class IOLoop;
     private:
         IOLoop* loop;
-        map<int, string> read_buffers;
-        map<int, string> write_buffers;
         map<int, HttpResponseHandler*> handlers;
     protected:
         /**
@@ -200,19 +203,19 @@ class AsyncHttpClient : public IOHandler {
          *
          * @param fd the associted file descriptor
          */
-        void on_read(int& fd);
+        void on_read(const int& fd);
         /**
          * Called when network buffer of the file descriptor is available. 
          *
          * @param fd the associted file descriptor
          */
-        void on_write(int& fd);
+        void on_write(const int& fd);
         /**
-         * Called when the file descriptor is closed due to error. 
+         * Called when the file descriptor is closed unexpectedly. 
          *
          * @param fd the associted file descriptor
          */
-        void on_error(int& fd);
+        void on_close(const int& fd);
     public:
         /**
          * Constructor.
@@ -221,7 +224,9 @@ class AsyncHttpClient : public IOHandler {
          */
         AsyncHttpClient(IOLoop* const loop=NULL);
        /**
-         * Makes a request and handles the response by the handler. 
+         * Makes a request and handles the response by the handler. Note that,
+         * unlike AsyncHttpServer, this class deletes (de-allocate the memory 
+         * of) the handler after it is called.
          *
          * @param host the host (in IP format) of the target server
          * @param port the port of the target server
@@ -236,15 +241,12 @@ class AsyncHttpClient : public IOHandler {
 };
 
 /**
- * AsyncHttpServer is an async server http server. The server is driven by an 
- * IO loop. If one is not given, the default IO loop is used.
+ * AsyncHttpServer is an async HTTP server driven by an IO loop. 
  */
 class AsyncHttpServer : public IOHandler {
     private:
         int fd;
         IOLoop* loop;
-        map<int, string> read_buffers;
-        map<int, string> write_buffers;
         vector<pair<string, HttpRequestHandler*> > handlers;
     protected:
         /**
@@ -266,19 +268,19 @@ class AsyncHttpServer : public IOHandler {
          * 
          * @param fd the associated file descriptor
          */
-        void on_read(int& fd);
+        void on_read(const int& fd);
         /**
          * Called when network buffer of the file descriptor is available. 
          * 
          * @param fd the associated file descriptor
          */
-        void on_write(int& fd);
+        void on_write(const int& fd);
         /**
-         * Called when the file descriptor is closed due to error. 
+         * Called when the file descriptor is closed unexpectedly. 
          * 
          * @param fd the associated file descriptor
          */
-        void on_error(int& fd);
+        void on_close(const int& fd);
     public:
         /**
          * Constructor. This creates a socket and add the socket to the loop
@@ -293,7 +295,9 @@ class AsyncHttpServer : public IOHandler {
          */
         ~AsyncHttpServer();
         /**
-         * Adds the handler for requests matching the pattern.
+         * Adds the handler for requests matching the pattern. Note that, unlike
+         * AsyncHttpClient, this class keeps the handler until you explicitly
+         * delete (de-allocate the memory of) that handler yourself.
          *
          * @param pattern the pattern associated with the handler
          * @param handler the request handler for reqeusts matching the pattern
@@ -310,8 +314,8 @@ class AsyncHttpServer : public IOHandler {
 };
 
 /**
- * IOLoop wraps epoll Edge Triggered and notifies network events to registered
- * handlers, e.g. AsyncHttpClient and AsyncHttpServer.
+ * IOLoop wraps epoll Edge Triggered and notifies registered handlers of network 
+ * events. Examples of handlers are AsyncHttpClient and AsyncHttpServer.
  *
  * TODO: (1) IOLoop runs forever at the moment. Maybe, adding timeout in start().
  */

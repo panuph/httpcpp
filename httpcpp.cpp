@@ -20,22 +20,21 @@ HttpRequest* HttpRequest::from_sequence(const string& sequence) {
         p0 += 4;
         size_t p1 = sequence.find(" ");
         string method = sequence.substr(0, p1);
-        if (method.compare("GET") == 0) {
-            size_t p2 = sequence.find(" ", ++p1);
-            string path = sequence.substr(p1, p2 - p1);
-            return new HttpRequest(method, path);
-        } else if (method.compare("POST") == 0) {
-            size_t p3 = sequence.find("Content-Length:") + 15; 
+        size_t p2 = sequence.find(" ", ++p1);
+        string path = sequence.substr(p1, p2 - p1);
+        size_t p3 = sequence.find("Content-Length:");
+        if (p3 != string::npos) {
+            p3 += 15;
             size_t p4 = sequence.find("\r\n", p3);
             int length = atoi(sequence.substr(p3, p4 - p3).data());
             if (sequence.size() >= p0 + length) {
-                size_t p2 = sequence.find(" ", ++p1);
-                string path = sequence.substr(p1, p2 - p1);
                 string body = sequence.substr(p0, length);
                 return new HttpRequest(method, path, body);
-            }   
+            } 
+        } else {
+            return new HttpRequest(method, path);
         } 
-    }   
+    }
     return NULL;
 }
 
@@ -79,6 +78,7 @@ const string HttpResponse::to_sequence() {
 }
 
 HttpResponse* HttpResponse::from_sequence(const string& sequence) {
+    // the algorithm only works if Content-Length exists
     size_t p0 = sequence.find("\r\n\r\n");
     if (p0 != string::npos) {
         p0 += 4;
@@ -121,70 +121,93 @@ HttpResponse* HttpRequestHandler::post(HttpRequest* const request,
     return new HttpResponse(405);
 }
 
+// IOHandler
+
+void IOHandler::clear_buffers(const int& fd) {
+    this->read_buffers.erase(fd);
+    this->write_buffers.erase(fd);
+}
+
 // AsyncHttpClient
 
-void AsyncHttpClient::on_read(int& fd) {
+void AsyncHttpClient::on_read(const int& fd) {
     char buffer[BUFFER_SIZE];
     bool done = false;
+    bool error = false;
     while (true) {
         ssize_t n = read(fd, buffer, BUFFER_SIZE);
-        if (n > 0) {     
-            this->read_buffers[fd].append(buffer);
-        } else if (n == 0) {    
-            // somehow always get n==0 but EAGAIN, no idea why
+        if (n > 0) { 
+            this->read_buffers[fd].append(buffer, n);
+        } else if (n == 0) { 
+            // somehow it gets n=0 instead of n=-1 with errno=EAGAIN
             HttpResponse* response = 
                 HttpResponse::from_sequence(this->read_buffers[fd]);
             if (response != NULL) {
                 this->handlers[fd]->on_receive(response);
                 delete response;
-                done = true;
-                break;
+            } else {
+                error = true;
             }
+            done = true;
+            // delete the handler to de-allocate the memory
+            delete this->handlers[fd];
+            break;
         } else {
-            if (errno != EAGAIN) {
+            if (errno == EAGAIN) {
+                // try again later
+            } else {
                 done = true;
             } 
             break;
         }
     }
     if (done) {
-        this->read_buffers.erase(fd);
-        this->write_buffers.erase(fd);
-        this->handlers.erase(fd);
-        close(fd);
+        this->on_close(fd);
+    }
+    if (error) {
+        throw runtime_error("AsyncHttpClient read error");
     }
 }
 
-void AsyncHttpClient::on_write(int& fd) {
+void AsyncHttpClient::on_write(const int& fd) {
     bool error = false;
+    int n_is_zero = 0;
     while (true) {
         size_t size = this->write_buffers[fd].size();
         ssize_t n = write(fd, this->write_buffers[fd].data(), size);
         if (n > 0) {
-            this->write_buffers[fd] = this->write_buffers[fd].substr(n);
-        } else {
-            // somehow always get n==0 but EAGAIN, no idea why
-            if (errno == EAGAIN) {
-
+            this->write_buffers[fd].erase(0, n);
+        } else if (n == 0) {
+            // somehow it gets n=0 instead of n=-1 with errno=EAGAIN
+            n_is_zero++;
+            if (this->write_buffers[fd].size() == 0) {
+                // prepare the read buffer
+                this->clear_buffers(fd);
+                this->read_buffers[fd] = string();
+                this->loop->set_handler(fd, this, true);
+                break;
             } else {
-                if (this->write_buffers[fd].size() == 0) {
-                    this->loop->set_handler(fd, this, true);
-                    this->read_buffers[fd] = string();
-                } else {
+                if (n_is_zero == 3) {
                     error = true;
+                    break;
                 }
+            } 
+        } else {
+            if (errno == EAGAIN) {
+                // try again later
+            } else {
+                error = true;
             }
             break;
         }
     }
     if (error) {
-        this->on_error(fd);
+        this->on_close(fd);
     }
 }
 
-void AsyncHttpClient::on_error(int& fd) {
-    this->read_buffers.erase(fd);
-    this->write_buffers.erase(fd);
+void AsyncHttpClient::on_close(const int& fd) {
+    this->clear_buffers(fd);
     this->handlers.erase(fd);
     close(fd);
 }
@@ -219,7 +242,8 @@ void AsyncHttpClient::fetch(const string& host, const int& port,
     stringstream packet;
     packet << method << " " << path << " HTTP/1.0\r\n" <<
         "Content-Length: " << body.size() << "\r\n\r\n" << body;
-    // set the write buffer and the handler
+    // set the write buffer and the handler.
+    this->clear_buffers(fd);
     this->write_buffers[fd] = packet.str();
     this->handlers[fd] = handler;
     this->loop->set_handler(fd, this, false);
@@ -267,7 +291,7 @@ vector<string> AsyncHttpServer::get_arguments(const string& path) {
     return args;
 }
 
-void AsyncHttpServer::on_read(int& fd) {
+void AsyncHttpServer::on_read(const int& fd) {
     if (fd == this->fd) {   
         // read on listening socket, keep accepting
         while (true) {
@@ -281,8 +305,8 @@ void AsyncHttpServer::on_read(int& fd) {
                     throw runtime_error(strerror(errno));
                 }
             } else {
-                // set up the buffer for each accepted socket and register 
-                // the server for read events from the IO loop
+                // prepare the read buffer for the accepted socket
+                this->clear_buffers(fd);
                 this->read_buffers[fd] = string();
                 this->loop->set_handler(cfd, this, true);
             }
@@ -295,25 +319,26 @@ void AsyncHttpServer::on_read(int& fd) {
         while (true) {
             ssize_t n = read(fd, buffer, BUFFER_SIZE);
             if (n > 0) {            
-                this->read_buffers[fd].append(buffer);
+                this->read_buffers[fd].append(buffer, n);
             } else if (n == 0) {    
                 // socket close 
                 error = true;
                 break;
-            } else {                
+            } else { 
                 if (errno != EAGAIN) {
                     error = true;
                 } else {
-                    // no more data this round, try if request is available
+                    // no more data, try if request is available
                     HttpRequest* request = 
                         HttpRequest::from_sequence(this->read_buffers[fd]);
                     if (request != NULL) {
-                        // find a handler to handle it
+                        // find a handler to handle the request
                         HttpResponse* response = NULL;
                         HttpRequestHandler* handler = 
                             this->find_handler(request->path);
                         if (handler != NULL) {
-                            vector<string> args = this->get_arguments(request->path);
+                            vector<string> args = 
+                                this->get_arguments(request->path);
                             if (request->method.compare("GET") == 0) {
                                 response = handler->get(request, args);
                             } else if (request->method.compare("POST") == 0) {
@@ -329,6 +354,7 @@ void AsyncHttpServer::on_read(int& fd) {
                         if (response == NULL) {
                             response = new HttpResponse(500);
                         }
+                        this->clear_buffers(fd);
                         this->write_buffers[fd] = response->to_sequence();
                         this->loop->set_handler(fd, this, false); 
                         delete response;
@@ -339,43 +365,51 @@ void AsyncHttpServer::on_read(int& fd) {
             }
         }
         if (error) {
-            this->read_buffers.erase(fd);
-            this->write_buffers.erase(fd);
-            this->loop->unset_handler(fd);
-            close(fd);
+            this->on_close(fd);
         }
     }
 }
 
-void AsyncHttpServer::on_write(int& fd) {
+void AsyncHttpServer::on_write(const int& fd) {
     bool done = false;
+    bool error = false;
+    int n_is_zero = 0;
     while (true) {
         size_t size = this->write_buffers[fd].size();
         ssize_t n = write(fd, this->write_buffers[fd].data(), size);
         if (n > 0) {
-            this->write_buffers[fd] = this->write_buffers[fd].substr(n);
-        } else {
-            // somehow n == 0 also works event if it is not EAGAIN
-            if (errno != EAGAIN) {
+            this->write_buffers[fd].erase(0, n); 
+        } else if (n == 0) {
+            // somehow it gets n=0 instead of n=-1 with errno=EAGAIN
+            n_is_zero++;
+            if (this->write_buffers[fd].size() == 0) {
                 done = true;
+                break;
             } else {
-                if (this->write_buffers[fd].size() == 0) {
-                    done = true;
+                if (n_is_zero == 3) {
+                    error = true;
+                    break;
                 }
+            }
+        } else {
+            if (errno == EAGAIN) {
+                // try again later
+            } else {
+                error = true;
             }
             break;
         }
     }
-    if (done) {
-        // not really an error but want to share the code in on_error() and note
-        // that at the moment the server always close the socket after write
-        this->on_error(fd);
+    if (done || error) {
+        this->on_close(fd);
+    }
+    if (error) {
+        throw runtime_error("AsyncHttpSever write error");
     }
 }
 
-void AsyncHttpServer::on_error(int& fd) {
-    this->read_buffers.erase(fd);
-    this->write_buffers.erase(fd);
+void AsyncHttpServer::on_close(const int& fd) {
+    this->clear_buffers(fd);
     this->loop->unset_handler(fd);
     close(fd);
 }
@@ -387,24 +421,24 @@ AsyncHttpServer::AsyncHttpServer(const int& port, IOLoop* const loop) {
     } else {
         this->loop = loop;
     }
-    // create a socket, bind and listen on the port
+    // create a socket, bind and listen to the port
     if ((this->fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        throw runtime_error("Create socket error for HTTP server");
+        throw runtime_error(strerror(errno));
     }
     int opt = 1;
     if (setsockopt(this->fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        throw runtime_error("Set socket option error for the HTTP server");
+        throw runtime_error(strerror(errno));
     }
-    struct sockaddr_in s_addr;
-    memset(&s_addr, 0, sizeof(s_addr));
-    s_addr.sin_family = AF_INET;
-    s_addr.sin_port = htons(port);
-    s_addr.sin_addr.s_addr = INADDR_ANY;
-    if (bind(this->fd, (struct sockaddr*)&s_addr, sizeof(s_addr)) < 0) {
-        throw runtime_error("Bind socket error for the HTTP server");
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(this->fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        throw runtime_error(strerror(errno));
     }
     if (listen(this->fd, LISTEN_BACKLOG) < 0) {
-        throw runtime_error("Socket listen error for the HTTP server");
+        throw runtime_error(strerror(errno));
     } 
     // set itself as the read handler for the socket
     this->loop->set_handler(this->fd, this, true);
@@ -451,11 +485,11 @@ IOHandler* IOLoop::set_handler(const int& fd, IOHandler* const handler,
     // set the socket non-blocking
     int flags; 
     if ((flags = fcntl(fd, F_GETFL, 0)) < 0) {
-        throw runtime_error("Read file descriptor flag error");
+        throw runtime_error(strerror(errno));
     }
     flags = flags | O_NONBLOCK;
     if (fcntl(fd, F_SETFL, flags) < 0) {
-        throw runtime_error("Set file descriptor flag error");
+        throw runtime_error(strerror(errno));
     }
     // add the socket to epoll
     struct epoll_event event;
@@ -468,7 +502,7 @@ IOHandler* IOLoop::set_handler(const int& fd, IOHandler* const handler,
     // unset the previous handler if any and set the new one 
     IOHandler* previous = this->unset_handler(fd);
     if (epoll_ctl(this->fd, EPOLL_CTL_ADD, fd, &event) < 0) {
-        throw runtime_error("Set epoll file decriptor error (read)");
+        throw runtime_error(strerror(errno));
     }
     this->handlers[fd] = handler;
     return previous;
@@ -496,15 +530,14 @@ void IOLoop::start() {
     while (true) {
         int n;
         if ((n = epoll_wait(this->fd, events, MAX_EVENTS, -1)) < 0) {
-            throw runtime_error("Wait error in epoll");
+            throw runtime_error(strerror(errno));
         }
         for (int i = 0; i < n; i++) {
             int fd = events[i].data.fd;
             if ((events[i].events & EPOLLERR) || (events[i].events & EPOLLHUP)) {
-                this->handlers[fd]->on_error(fd);
+                this->handlers[fd]->on_close(fd);
                 this->unset_handler(fd);
                 close(fd);
-                cout << "ERROR" << endl;
             } 
             else if (events[i].events & EPOLLOUT) {
                 this->handlers[fd]->on_write(fd);
