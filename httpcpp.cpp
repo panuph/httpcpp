@@ -61,17 +61,50 @@ const string& HttpRequest::get_body() {
 
 const string HttpResponse::to_sequence() {
     stringstream packet;
-    if (this->code == 200) {
-        packet << "HTTP/1.0 200 OK\r\n";
-    } else if (this->code == 204) {
-        packet << "HTTP/1.0 204 No Content\r\n";
-    } else if (this->code == 404) {
-        packet << "HTTP/1.0 404 Not Found\r\n";
-    } else if (this->code == 405) {
-        packet << "HTTP/1.0 405 Method Not Allowed\r\n";
-    } else {
-        packet << "HTTP/1.0 500 Internal Server Error\r\n";
+    string reason;
+    switch (this->code) {
+        case 100: reason = "Continue"; break;
+        case 101: reason = "Switching Protocols"; break;
+        case 200: reason = "OK"; break;
+        case 201: reason = "Created"; break;
+        case 202: reason = "Accepted"; break;
+        case 203: reason = "Non-Authoritative Information"; break;
+        case 204: reason = "No Content"; break;
+        case 205: reason = "Reset Content"; break;
+        case 206: reason = "Partial Content"; break;
+        case 300: reason = "Multiple Choices"; break;
+        case 301: reason = "Moved Permanently"; break;
+        case 302: reason = "Found"; break;
+        case 303: reason = "See Other"; break;
+        case 304: reason = "Not Modified"; break;
+        case 305: reason = "Use Proxy"; break;
+        case 307: reason = "Temporary Redirect"; break;
+        case 400: reason = "Bad Request"; break;
+        case 401: reason = "Unauthorized"; break;
+        case 403: reason = "Forbidden"; break;
+        case 404: reason = "Not Found"; break;
+        case 405: reason = "Method Not Allowed"; break;
+        case 406: reason = "Not Acceptable"; break;
+        case 407: reason = "Proxy Authentication Required"; break;
+        case 408: reason = "Request Timeout"; break;
+        case 409: reason = "Conflict"; break;
+        case 410: reason = "Gone"; break;
+        case 411: reason = "Length Required"; break;
+        case 412: reason = "Precondition Failed"; break;
+        case 413: reason = "Request Entity Too Large"; break;
+        case 414: reason = "Request-URI Too Long"; break;
+        case 415: reason = "Unsupported Media Type"; break;
+        case 416: reason = "Requested Range Not Satisfiable"; break;
+        case 417: reason = "Expectation Failed"; break;
+        case 500: reason = "Internal Server Error"; break;
+        case 501: reason = "Not Implemented"; break;
+        case 502: reason = "Bad Gateway"; break;
+        case 503: reason = "Service Unavailable"; break;
+        case 504: reason = "Gateway Timeout"; break;
+        case 505: reason = "HTTP Version Not Supported"; break;
+        default: this->code = 500; reason = "Internal Server Error"; break;
     }
+    packet << "HTTP/1.0 " << this->code << " " << reason << "\r\n";
     packet << "Content-Length: " << this->body.size() << "\r\n\r\n";
     packet << body;
     return packet.str();

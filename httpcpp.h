@@ -236,8 +236,8 @@ class AsyncHttpClient : public IOHandler {
          * @param handler the handler to call when the response is received
          */
         void fetch(const string& host, const int& port, const string& method,
-                  const string& path, const string& body, 
-                  HttpResponseHandler* const handler);
+                   const string& path, const string& body, 
+                   HttpResponseHandler* const handler);
 };
 
 /**
