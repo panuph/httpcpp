@@ -7,8 +7,7 @@ using namespace std;
 // client: curl "http://127.0.0.1:8850/a/10"
 class HttpRequestHandlerA : public HttpRequestHandler {
     public:
-        HttpResponse* get(HttpRequest* const request,
-                          const vector<string>& args) {
+        void get(HttpRequest* const request, const vector<string>& args) {
             cout << "-----------------------------------" << endl;
             cout << "Handler A receives:" << endl;
             cout << "method: " << request->get_method() << endl;
@@ -17,15 +16,14 @@ class HttpRequestHandlerA : public HttpRequestHandler {
             for (int i = 0; i < args.size(); i++) {
                 cout << "arg  : " << args[i] << endl;
             }
-            return new HttpResponse(200, "A");
+            this->reply(request, 200, "A=>" + request->get_body());
         }
 };
 
 // client: curl "http://127.0.0.1:8850/b/10/" -d "abcxyz"
 class HttpRequestHandlerB : public HttpRequestHandler {
     public:
-        HttpResponse* post(HttpRequest* const request, 
-                           const vector<string>& args) {
+        void post(HttpRequest* const request, const vector<string>& args) {
             cout << "-----------------------------------" << endl;
             cout << "Handler B receives:" << endl;
             cout << "method: " << request->get_method() << endl;
@@ -34,13 +32,13 @@ class HttpRequestHandlerB : public HttpRequestHandler {
             for (int i = 0; i < args.size(); i++) {
                 cout << "arg  : " << args[i] << endl;
             }
-            return new HttpResponse(200, "B");
+            this->reply(request, 200, "B=>" + request->get_body());
         }
 };
 
 class HttpResponseHandlerC : public HttpResponseHandler {
     public:
-        void on_receive(HttpResponse* const response) {
+        void handle(HttpResponse* const response) {
             cout << "-----------------------------------" << endl;
             cout << "Handler C receives:" << endl;
             cout << "code  : " << response->get_code() << endl;

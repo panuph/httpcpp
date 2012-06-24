@@ -30,10 +30,14 @@ class HttpResponseHandler;
  */
 class HttpRequest {
     friend class AsyncHttpServer;
+    friend class HttpRequestHandler;
     private:
         string method;      
         string path;        
         string body; 
+        AsyncHttpServer* server;
+        int fd;
+        bool done;
     protected:
         /**
          * Parses the sequence and returns a request if successful or NULL if 
@@ -42,7 +46,6 @@ class HttpRequest {
          * @param sequence the sequence to be parsed into an HttpRequest object
          */
         static HttpRequest* from_sequence(const string& sequence);
-    public:
         /** 
          * Constructor.
          *
@@ -50,7 +53,9 @@ class HttpRequest {
          * @param path the path of the request
          * @param body the body of the request
          */
-        HttpRequest(const string& method, const string& path, const string& body="");
+        HttpRequest(const string& method, const string& path, 
+            const string& body="");
+    public:
         /**
          * Returns the method. 
          */
@@ -84,9 +89,12 @@ class HttpResponse {
         string body;
     protected:
         /** 
-         * Returns the sequence of the resonse as an HTTP packet. 
+         * Returns the sequence of the resonse as an HTTP sequence. 
+         *
+         * @param code the code of the response
+         * @param body the body of the response
          */
-        const string to_sequence();
+        static const string to_sequence(int code, const string& body="");
         /**
          * Parses the sequence and returns a response if successful or NULL if 
          * not. The caller MUST delete the response when no longer used. 
@@ -94,14 +102,14 @@ class HttpResponse {
          * @param sequence the sequence to be parsed into an HttpResponse object 
          */
         static HttpResponse* from_sequence(const string& sequence);
-    public:
         /** 
          * Constructor. 
          *
          * @param code the code of the response
-         * @param code the body of the response
+         * @param body the body of the response
          */
         HttpResponse(const int& code, const string& body="");
+    public:
         /**
          * Returns the code. 
          */
@@ -118,25 +126,40 @@ class HttpResponse {
  * methods accordingly.
  */
 class HttpRequestHandler {
+    friend class AsyncHttpServer;
+    protected:
+        /**
+         * Replies to the client of the request with the code and the body.
+         * 
+         * @param request the HTTP request to reply to
+         * @param code the code of the response
+         * @param body the body of the response
+         */
+        void reply(HttpRequest* const request, const int& code, 
+            const string& body="");
     public:
         /**
-         * Called when a HTTP GET request is available. The response returned 
-         * is sent to the client by the server.
+         * Destructor.
+         */
+        virtual ~HttpRequestHandler() {}
+        /**
+         * Called when a HTTP GET request is available. The caller should
+         * always manage to reply the request using method reply().
          *
          * @param request the HTTP request         
          * @param args the arguments associated with the regex of the handler        
          */
-        virtual HttpResponse* get(HttpRequest* const request, 
-                                  const vector<string>& args);
+        virtual void get(HttpRequest* const request, 
+            const vector<string>& args);
         /**
-         * Called when a HTTP POST request is available. The response returned
-         * is sent to the client by the server.
+         * Called when a HTTP POST request is available. The caller should 
+         * always manage to reply the request using method reply().
          *
          * @param request the HTTP request 
          * @param args the arguments associated with the regex of the handler        
          */
-        virtual HttpResponse* post(HttpRequest* const request,
-                                   const vector<string>& args);
+        virtual void post(HttpRequest* const request, 
+            const vector<string>& args);
 };
 
 /**
@@ -146,11 +169,15 @@ class HttpRequestHandler {
 class HttpResponseHandler {
     public:
         /**
+         * Destructor.
+         */
+        virtual ~HttpResponseHandler() {}
+        /**
          * Called when an HTTP response is available. 
          *
          * @param response the HTTP response
          */
-        virtual void on_receive(HttpResponse* const response) = 0;
+        virtual void handle(HttpResponse* const response) {}
 };
 
 /**
@@ -168,6 +195,10 @@ class IOHandler {
          */
         void clear_buffers(const int& fd);
     public:
+        /**
+         * Destructor.
+         */
+        virtual ~IOHandler() {}
         /**
          * Called when network data from the file descriptor is available. 
          *
@@ -225,7 +256,8 @@ class AsyncHttpClient : public IOHandler {
        /**
          * Makes a request and handles the response by the handler. Note that,
          * unlike AsyncHttpServer, this class deletes (de-allocate the memory 
-         * of) the handler after it is called.
+         * of) the handler after it is called. Raises an exception if an error
+         * occurs.
          *
          * @param host the host (in IP format) of the target server
          * @param port the port of the target server
@@ -235,14 +267,15 @@ class AsyncHttpClient : public IOHandler {
          * @param handler the handler to call when the response is received
          */
         void fetch(const string& host, const int& port, const string& method,
-                   const string& path, const string& body, 
-                   HttpResponseHandler* const handler);
+            const string& path, const string& body, 
+            HttpResponseHandler* const handler);
 };
 
 /**
  * AsyncHttpServer is an async HTTP server driven by an IO loop. 
  */
 class AsyncHttpServer : public IOHandler {
+    friend class HttpRequestHandler;
     private:
         int fd;
         IOLoop* loop;
@@ -262,6 +295,14 @@ class AsyncHttpServer : public IOHandler {
          * @param path the path of the request
          */
         vector<string> get_arguments(const string& path);
+        /**
+         * Writes to the client of the file descriptor the response.
+         * 
+         * @param fd the associated file descriptor
+         * @param code the code of the response
+         * @param body the body of the response
+         */
+        void reply(const int& fd, const int& code, const string& body="");
         /**
          * Called when network data from the file descriptor is available. 
          * 
@@ -302,7 +343,7 @@ class AsyncHttpServer : public IOHandler {
          * @param handler the request handler for reqeusts matching the pattern
          */
         void add_handler(const string& pattern, 
-                         HttpRequestHandler* const handler);
+            HttpRequestHandler* const handler);
         /**
          * Removes the first found handler of the pattern and returns the 
          * removed handler or NULL if no handler is removed.
@@ -335,10 +376,10 @@ class IOLoop {
          *
          * @param fd the associated file descriptor
          * @param handler the handler to notify of read events
-         * @bool read true for read events and false for write events
+         * @param mode 'r' for read events or else for write events
          */
         IOHandler* set_handler(const int& fd, IOHandler* const handler, 
-                               bool read);
+            char mode='r');
         /**
          * Unsets the handler for all events on the file descriptor and returns
          * the previously set handler or NULL if no handler was previously set.

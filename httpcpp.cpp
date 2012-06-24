@@ -59,10 +59,10 @@ const string& HttpRequest::get_body() {
 
 // HttpResponse
 
-const string HttpResponse::to_sequence() {
+const string HttpResponse::to_sequence(int code, const string& body) {
     stringstream packet;
     string reason;
-    switch (this->code) {
+    switch (code) {
         case 100: reason = "Continue"; break;
         case 101: reason = "Switching Protocols"; break;
         case 200: reason = "OK"; break;
@@ -102,10 +102,10 @@ const string HttpResponse::to_sequence() {
         case 503: reason = "Service Unavailable"; break;
         case 504: reason = "Gateway Timeout"; break;
         case 505: reason = "HTTP Version Not Supported"; break;
-        default: this->code = 500; reason = "Internal Server Error"; break;
+        default: code = 500; reason = "Internal Server Error"; break;
     }
-    packet << "HTTP/1.0 " << this->code << " " << reason << "\r\n";
-    packet << "Content-Length: " << this->body.size() << "\r\n\r\n";
+    packet << "HTTP/1.0 " << code << " " << reason << "\r\n";
+    packet << "Content-Length: " << body.size() << "\r\n\r\n";
     packet << body;
     return packet.str();
 }
@@ -144,14 +144,24 @@ const string& HttpResponse::get_body() {
 
 // HttpRequestHandler
 
-HttpResponse* HttpRequestHandler::get(HttpRequest* const request,
-                                      const vector<string>& args) {
-    return new HttpResponse(405);
+void HttpRequestHandler::reply(HttpRequest* const request, const int& code, 
+    const string& body) {
+    if (request->done) {
+        throw runtime_error("Reply to reqeust is already done");
+    } else {
+        request->server->reply(request->fd, code, body);
+        request->done = true;
+    }
 }
 
-HttpResponse* HttpRequestHandler::post(HttpRequest* const request,
-                                       const vector<string>& args) {
-    return new HttpResponse(405);
+void HttpRequestHandler::get(HttpRequest* const request,
+    const vector<string>& args) {
+    this->reply(request, 405);
+}
+
+void HttpRequestHandler::post(HttpRequest* const request,
+    const vector<string>& args) {
+    this->reply(request, 405);
 }
 
 // IOHandler
@@ -176,7 +186,7 @@ void AsyncHttpClient::on_read(const int& fd) {
             HttpResponse* response = 
                 HttpResponse::from_sequence(this->read_buffers[fd]);
             if (response != NULL) {
-                this->handlers[fd]->on_receive(response);
+                this->handlers[fd]->handle(response);
                 delete response;
             } else {
                 error = true;
@@ -217,7 +227,7 @@ void AsyncHttpClient::on_write(const int& fd) {
                 // prepare the read buffer
                 this->clear_buffers(fd);
                 this->read_buffers[fd] = string();
-                this->loop->set_handler(fd, this, true);
+                this->loop->set_handler(fd, this);
                 break;
             } else {
                 if (n_is_zero == 3) {
@@ -255,9 +265,8 @@ AsyncHttpClient::AsyncHttpClient(IOLoop* const loop) {
 }
 
 void AsyncHttpClient::fetch(const string& host, const int& port, 
-                            const string& method, const string& path, 
-                            const string& body, 
-                            HttpResponseHandler* const handler) {
+    const string& method, const string& path, const string& body, 
+    HttpResponseHandler* const handler) {
     int fd;
     struct sockaddr_in addr;
     if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -279,7 +288,7 @@ void AsyncHttpClient::fetch(const string& host, const int& port,
     this->clear_buffers(fd);
     this->write_buffers[fd] = packet.str();
     this->handlers[fd] = handler;
-    this->loop->set_handler(fd, this, false);
+    this->loop->set_handler(fd, this, 'w');
 }
 
 // AsyncHttpServer
@@ -324,6 +333,12 @@ vector<string> AsyncHttpServer::get_arguments(const string& path) {
     return args;
 }
 
+void AsyncHttpServer::reply(const int& fd, const int& code, 
+    const string& body) {
+    this->clear_buffers(fd);
+    this->write_buffers[fd] = HttpResponse::to_sequence(code, body);
+}
+
 void AsyncHttpServer::on_read(const int& fd) {
     if (fd == this->fd) {   
         // read on listening socket, keep accepting
@@ -341,7 +356,7 @@ void AsyncHttpServer::on_read(const int& fd) {
                 // prepare the read buffer for the accepted socket
                 this->clear_buffers(fd);
                 this->read_buffers[fd] = string();
-                this->loop->set_handler(cfd, this, true);
+                this->loop->set_handler(cfd, this);
             }
         }
 
@@ -366,31 +381,29 @@ void AsyncHttpServer::on_read(const int& fd) {
                         HttpRequest::from_sequence(this->read_buffers[fd]);
                     if (request != NULL) {
                         // find a handler to handle the request
-                        HttpResponse* response = NULL;
                         HttpRequestHandler* handler = 
                             this->find_handler(request->path);
                         if (handler != NULL) {
                             vector<string> args = 
                                 this->get_arguments(request->path);
+                            request->server = this;
+                            request->fd = fd;
+                            request->done = false;
                             if (request->method.compare("GET") == 0) {
-                                response = handler->get(request, args);
+                                handler->get(request, args);
                             } else if (request->method.compare("POST") == 0) {
-                                response = handler->post(request, args);
+                                handler->post(request, args);
                             } else {
-                                response = new HttpResponse(405);
+                                handler->reply(request, 405);
                             }
                         } else {
-                            response = new HttpResponse(404);
+                            this->reply(fd, 404);
+                        }
+                        if (!request->done) {
+                            this->reply(fd, 500);
                         }
                         delete request;
-                        // write the response back to the client
-                        if (response == NULL) {
-                            response = new HttpResponse(500);
-                        }
-                        this->clear_buffers(fd);
-                        this->write_buffers[fd] = response->to_sequence();
-                        this->loop->set_handler(fd, this, false); 
-                        delete response;
+                        this->loop->set_handler(fd, this, 'w'); 
                         break;
                     }
                 }
@@ -474,7 +487,7 @@ AsyncHttpServer::AsyncHttpServer(const int& port, IOLoop* const loop) {
         throw runtime_error(strerror(errno));
     } 
     // set itself as the read handler for the socket
-    this->loop->set_handler(this->fd, this, true);
+    this->loop->set_handler(this->fd, this);
 }
 
 AsyncHttpServer::~AsyncHttpServer() {
@@ -488,7 +501,7 @@ AsyncHttpServer::~AsyncHttpServer() {
 }
 
 void AsyncHttpServer::add_handler(const string& pattern, 
-                                  HttpRequestHandler* const handler) {
+    HttpRequestHandler* const handler) {
     this->handlers.push_back(make_pair(pattern, handler));
 }
 
@@ -514,7 +527,7 @@ IOLoop::IOLoop() {
 }
 
 IOHandler* IOLoop::set_handler(const int& fd, IOHandler* const handler, 
-                               bool read) {
+    char mode) {
     // set the socket non-blocking
     int flags; 
     if ((flags = fcntl(fd, F_GETFL, 0)) < 0) {
@@ -527,7 +540,7 @@ IOHandler* IOLoop::set_handler(const int& fd, IOHandler* const handler,
     // add the socket to epoll
     struct epoll_event event;
     event.data.fd = fd;
-    if (read) {
+    if (mode == 'r') {
         event.events = EPOLLIN | EPOLLET;
     } else {
         event.events = EPOLLOUT | EPOLLET;
