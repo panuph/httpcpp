@@ -1,27 +1,38 @@
-CC = g++
-CGLAGS = -Wall -ansi -pedantic
+CC=g++
+AR=ar -cvq
+COPY=cp
+REMOVE=rm -f
+MKDIR=mkdir -p
+TAR=tar -zcvf
+CGLAGS=-Wall -ansi -pedantic
+ARCHIVE=httpcpp-1.0.0
 
-all: lib
+all: libhttpcpp.a
 
-lib: httpcpp.o
-	mkdir -p ./lib
-	ar -cvq ./lib/libhttpcpp.a httpcpp.o
-	rm -f httpcpp.o
+libhttpcpp.a: httpcpp.o
+	$(MKDIR) ./lib
+	$(AR) ./lib/$@ httpcpp.o
+	$(REMOVE) httpcpp.o
+
+archive:
+	$(MKDIR) ./$(ARCHIVE)
+	$(COPY) httpcpp.h httpcpp.cpp example.cpp makefile README.md ./$(ARCHIVE)
+	$(TAR) $(ARCHIVE).tar.gz ./$(ARCHIVE)
+	$(REMOVE) -r ./$(ARCHIVE)
 
 install:
-	cp ./lib/libhttpcpp.a /usr/local/lib
-	cp ./httpcpp.h /usr/local/include
+	$(COPY) ./lib/libhttpcpp.a /usr/local/lib
+	$(COPY) ./httpcpp.h /usr/local/include
 
 example: example.o
-	mkdir -p ./bin
-	$(CC) $(CFLAGS) example.o -o ./bin/example -lhttpcpp
-	rm -f example.o
+	$(MKDIR) ./bin
+	$(CC) $(CFLAGS) example.o -o ./bin/$@ -lhttpcpp
+	$(REMOVE) example.o
 
-%.o: %.cpp
+.cpp.o:
 	$(CC) $(CFLAGS) -c $<
 
 clean:
-	rm -f httpcpp.o
-	rm -f example.o
-	rm -f ./lib/libhttpcpp.a
-	rm -f ./bin/example
+	$(REMOVE) *.o
+	$(REMOVE) ./lib/libhttpcpp.a
+	$(REMOVE) ./bin/example
