@@ -276,9 +276,11 @@ void AsyncHttpClient::fetch(const string& host, const int& port,
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     if (inet_aton(host.data(), &addr.sin_addr) <= 0) {
+        close(fd);
         throw runtime_error(strerror(errno));
     }
     if (connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(fd);
         throw runtime_error(strerror(errno));
     }
     stringstream packet;
