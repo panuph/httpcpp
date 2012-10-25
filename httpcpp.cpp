@@ -6,6 +6,8 @@
 #include <sys/epoll.h>
 #include <sys/socket.h>
 
+#include <cstdlib>
+#include <cstring>
 #include <sstream>
 #include <iostream>
 #include <stdexcept>
